@@ -1,6 +1,6 @@
 DCPU-16 Specification
 Copyright 1985 Mojang
-Version 1.5
+Version 1.7
 
 
 
@@ -63,6 +63,7 @@ DESCRIPTION is a short text that describes the opcode or value.
 * "next word" means "[PC++]". Increases the word length of the instruction by 1.
 * By using 0x18, 0x19, 0x1a as PEEK, POP/PUSH, and PICK there's a reverse stack
   starting at memory location 0xffff. Example: "SET PUSH, 10", "SET X, POP"
+* Attempting to write to a literal value fails silently
 
 
 
@@ -82,15 +83,15 @@ DESCRIPTION is a short text that describes the opcode or value.
    |      |          | sets b and EX to 0 instead. (treats b, a as unsigned)
  3 | 0x07 | DVI b, a | like DIV, but treat b, a as signed. Rounds towards 0
  3 | 0x08 | MOD b, a | sets b to b%a. if a==0, sets b to 0 instead.
- 3 | 0x09 | MDI b, a | like MOD, but treat b, a as signed. Rounds towards 0
+ 3 | 0x09 | MDI b, a | like MOD, but treat b, a as signed. (MDI -7, 16 == -7)
  1 | 0x0a | AND b, a | sets b to b&a
  1 | 0x0b | BOR b, a | sets b to b|a
  1 | 0x0c | XOR b, a | sets b to b^a
- 2 | 0x0d | SHR b, a | sets b to b>>>a, sets EX to ((b<<16)>>a)&0xffff 
+ 1 | 0x0d | SHR b, a | sets b to b>>>a, sets EX to ((b<<16)>>a)&0xffff 
    |      |          | (logical shift)
- 2 | 0x0e | ASR b, a | sets b to b>>a, sets EX to ((b<<16)>>>a)&0xffff 
+ 1 | 0x0e | ASR b, a | sets b to b>>a, sets EX to ((b<<16)>>>a)&0xffff 
    |      |          | (arithmetic shift) (treats b as signed)
- 2 | 0x0f | SHL b, a | sets b to b<<a, sets EX to ((b<<a)>>16)&0xffff
+ 1 | 0x0f | SHL b, a | sets b to b<<a, sets EX to ((b<<a)>>16)&0xffff
 
  2+| 0x10 | IFB b, a | performs next instruction only if (b&a)!=0
  2+| 0x11 | IFC b, a | performs next instruction only if (b&a)==0
@@ -133,12 +134,12 @@ The value (a) is in the same six bit format as defined earlier.
  - | 0x04 | -     |
  - | 0x05 | -     |
  - | 0x06 | -     |
- 9 | 0x07 | HCF a | use sparingly
+ - | 0x07 | -     | 
  4 | 0x08 | INT a | triggers a software interrupt with message a
  1 | 0x09 | IAG a | sets a to IA 
  1 | 0x0a | IAS a | sets IA to a
- 3 | 0x0b | IAP a | if IA is 0, does nothing, otherwise pushes IA to the stack,
-   |      |       | then sets IA to a
+ 3 | 0x0b | RFI a | disables interrupt queueing, pops A from the stack, then 
+   |      |       | pops PC from the stack
  2 | 0x0c | IAQ a | if a is nonzero, interrupts will be added to the queue
    |      |       | instead of triggered. if a is zero, interrupts will be
    |      |       | triggered as normal again
@@ -175,19 +176,19 @@ multiple interrupts are triggered at the same time, they are added to a queue.
 If the queue grows longer than 256 interrupts, the DCPU-16 will catch fire. 
 
 When IA is set to something other than 0, interrupts triggered on the DCPU-16
-will push PC to the stack, followed by pushing A to the stack, then set the PC
-to IA, and A to the interrupt message. A well formed interrupt handler must pop
-A from the stack before returning (popping PC from the stack)
+will turn on interrupt queueing, push PC to the stack, followed by pushing A to
+the stack, then set the PC to IA, and A to the interrupt message.
  
 If IA is set to 0, a triggered interrupt does nothing. Software interrupts still
-take up two clock cycles, but immediately return, hardware interrupts are
-ignored, with the hardware being notified of this. Some hardware may choose to
-attempt to trigger the interrupt again at a later point.
+take up four clock cycles, but immediately return, incoming hardware interrupts
+are ignored. Note that a queued interrupt is considered triggered when it leaves
+the queue, not when it enters it.
 
-The DCPU-16 has no way of knowing when an interrupt handler has finished, so if
-an interrupt is triggered while an interrupt is being handled, the handler will
-get called twice. Calling IAS 0 or IAQ 1 immediately at the start of the handler
-will reliably prevent multiple concurrent interrupts.
+Interrupt handlers should end with RFI, which will disable interrupt queueing
+and pop A and PC from the stack as a single atomic instruction.
+IAQ is normally not needed within an interrupt handler, but is useful for time
+critical code.
+
 
 
 
